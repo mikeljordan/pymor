@@ -15,6 +15,7 @@ from pymor.core.config import config
 
 if config.HAVE_TORCH:
     from numbers import Number
+    import inspect
 
     import numpy as np
 
@@ -98,7 +99,7 @@ if config.HAVE_TORCH:
 
         def reduce(self, hidden_layers='[(N+P)*3, (N+P)*3]', activation_function=torch.tanh,
                    optimizer=optim.LBFGS, epochs=1000, batch_size=20, learning_rate=1.,
-                   restarts=10, seed=0):
+                   restarts=10, weight_decay=0., seed=0):
             """Reduce by training artificial neural networks.
 
             Parameters
@@ -124,6 +125,10 @@ if config.HAVE_TORCH:
                 initial weights and biases, it is advisable to train multiple
                 neural networks by starting with different initial values and
                 choose that one performing best on the validation set.
+            weight_decay
+                Weighting parameter for the l2-regularization of the weights and
+                biases in the neural network. This regularization is not available
+                for all optimizers; see the PyTorch documentation for more details.
             seed
                 Seed to use for various functions in PyTorch. Using a fixed seed,
                 it is possible to reproduce former results.
@@ -137,6 +142,7 @@ if config.HAVE_TORCH:
             assert epochs > 0
             assert batch_size > 0
             assert learning_rate > 0.
+            assert weight_decay >= 0.
 
             # set a seed for the PyTorch initialization of weights and biases
             # and further PyTorch methods
@@ -172,7 +178,8 @@ if config.HAVE_TORCH:
                 neural_network_parameters = {'layer_sizes': layer_sizes,
                                              'activation_function': activation_function}
                 training_parameters = {'optimizer': optimizer, 'epochs': epochs,
-                                       'batch_size': batch_size, 'learning_rate': learning_rate}
+                                       'batch_size': batch_size, 'learning_rate': learning_rate,
+                                       'weight_decay': weight_decay}
 
                 self.logger.info('Initializing neural network ...')
                 # initialize the neural network
@@ -991,9 +998,11 @@ if config.HAVE_TORCH:
             since LBFGS does not support mini-batching), `'learning_rate'` (a
             positive real number used as the (initial) step size of the optimizer;
             if not provided, 1 is taken as default value; thus far, no learning
-            rate schedulers are supported in this implementation), and
-            `'loss_function'` (a loss function from PyTorch; if not provided, the
-            MSE loss is taken as default).
+            rate schedulers are supported in this implementation),
+            `'weight_decay'` (non-negative real number that determines the strenght
+            of the l2-regularization; if not provided or 0., no regularization is
+            applied), and `'loss_function'` (a loss function from PyTorch; if not
+            provided, the MSE loss is taken as default).
 
         Returns
         -------
@@ -1036,7 +1045,18 @@ if config.HAVE_TORCH:
             batch_size = max(len(training_data), len(validation_data))
 
         # initialize optimizer and early stopping scheduler
-        optimizer = optimizer(neural_network.parameters(), lr=learning_rate)
+        weight_decay = 0. if 'weight_decay' not in training_parameters else training_parameters['weight_decay']
+        assert training_parameters['weight_decay'] >= 0.
+        if weight_decay > 0. and 'weight_decay' not in inspect.getfullargspec(optimizer).args:
+            optimizer = optimizer(neural_network.parameters(), lr=learning_rate)
+            logger.warning(f"Optimizer {optimizer.__class__.__name__} does not support weight decay! "
+                           "Continuing without regularization!")
+        elif 'weight_decay' in inspect.getfullargspec(optimizer).args:
+            optimizer = optimizer(neural_network.parameters(), lr=learning_rate,
+                                  weight_decay=weight_decay)
+        else:
+            optimizer = optimizer(neural_network.parameters(), lr=learning_rate)
+
         early_stopping_scheduler = EarlyStoppingScheduler(len(training_data) + len(validation_data))
 
         # create the training and validation sets as well as the respective data loaders
