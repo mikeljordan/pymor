@@ -82,6 +82,10 @@ if config.HAVE_TORCH:
                      basis_size=None, rtol=0., atol=0., l2_err=0., pod_params=None,
                      ann_mse='like_basis'):
             assert 0 < validation_ratio < 1 or validation_set
+
+            self.scaling_parameters = {'min_inputs': None, 'max_inputs': None,
+                                       'min_targets': None, 'max_targets': None}
+
             self.__auto_init(locals())
 
         def reduce(self, hidden_layers='[(N+P)*3, (N+P)*3]', activation_function=torch.tanh,
@@ -168,7 +172,8 @@ if config.HAVE_TORCH:
                 # run training algorithm with multiple restarts
                 self.neural_network, self.losses = multiple_restarts_training(self.training_data, self.validation_data,
                                                                               neural_network, target_loss, restarts,
-                                                                              training_parameters, seed)
+                                                                              training_parameters,
+                                                                              self.scaling_parameters, seed)
 
             self._check_tolerances()
 
@@ -193,10 +198,41 @@ if config.HAVE_TORCH:
                 self.training_data = []
                 for mu, u in zip(self.training_set, U):
                     sample = self._compute_sample(mu, u)
+                    # compute minimum and maximum of outputs/targets for scaling
+                    self._update_scaling_parameters(sample)
                     self.training_data.extend(sample)
 
             # compute mean square loss
             self.mse_basis = (sum(U.norm2()) - sum(svals**2)) / len(U)
+
+        def _update_scaling_parameters(self, sample):
+            assert len(sample) == 2 or (len(sample) == 1 and len(sample[0]) == 2)
+            if len(sample) == 1:
+                sample = sample[0]
+
+            def prepare_datum(datum):
+                if not (isinstance(datum, torch.DoubleTensor) or isinstance(datum, np.ndarray)):
+                    return datum.to_numpy()
+                return datum
+            sample = (torch.DoubleTensor(prepare_datum(sample[0])), torch.DoubleTensor(prepare_datum(sample[1])))
+
+            if self.scaling_parameters['min_inputs'] is not None:
+                self.scaling_parameters['min_inputs'] = torch.min(self.scaling_parameters['min_inputs'], sample[0])
+            else:
+                self.scaling_parameters['min_inputs'] = sample[0]
+            if self.scaling_parameters['max_inputs'] is not None:
+                self.scaling_parameters['max_inputs'] = torch.max(self.scaling_parameters['max_inputs'], sample[0])
+            else:
+                self.scaling_parameters['max_inputs'] = sample[0]
+
+            if self.scaling_parameters['min_targets'] is not None:
+                self.scaling_parameters['min_targets'] = torch.min(self.scaling_parameters['min_targets'], sample[1])
+            else:
+                self.scaling_parameters['min_targets'] = sample[1]
+            if self.scaling_parameters['max_targets'] is not None:
+                self.scaling_parameters['max_targets'] = torch.max(self.scaling_parameters['max_targets'], sample[1])
+            else:
+                self.scaling_parameters['max_targets'] = sample[1]
 
         def _compute_sample(self, mu, u=None):
             """Transform parameter and corresponding solution to |NumPy arrays|."""
@@ -251,6 +287,7 @@ if config.HAVE_TORCH:
                 projected_output_functional = (project(self.fom.output_functional, None, self.reduced_basis)
                                                if self.fom.output_functional else None)
                 rom = NeuralNetworkModel(self.neural_network, parameters=self.fom.parameters,
+                                         scaling_parameters=self.scaling_parameters,
                                          output_functional=projected_output_functional,
                                          name=f'{self.fom.name}_reduced')
 
@@ -288,6 +325,10 @@ if config.HAVE_TORCH:
         def __init__(self, fom, training_set, validation_set=None, validation_ratio=0.1,
                      validation_loss=None):
             assert 0 < validation_ratio < 1 or validation_set
+
+            self.scaling_parameters = {'min_inputs': None, 'max_inputs': None,
+                                       'min_targets': None, 'max_targets': None}
+
             self.__auto_init(locals())
 
         def compute_training_data(self):
@@ -296,6 +337,7 @@ if config.HAVE_TORCH:
                 self.training_data = []
                 for mu in self.training_set:
                     sample = self._compute_sample(mu)
+                    self._update_scaling_parameters(sample)
                     self.training_data.extend(sample)
 
         def _compute_sample(self, mu):
@@ -324,7 +366,8 @@ if config.HAVE_TORCH:
         def _build_rom(self):
             """Construct the reduced order model."""
             with self.logger.block('Building ROM ...'):
-                rom = NeuralNetworkStatefreeOutputModel(self.neural_network, self.fom.parameters,
+                rom = NeuralNetworkStatefreeOutputModel(self.neural_network, parameters=self.fom.parameters,
+                                                        scaling_parameters=self.scaling_parameters,
                                                         name=f'{self.fom.name}_output_reduced')
 
             return rom
@@ -403,8 +446,10 @@ if config.HAVE_TORCH:
             with self.logger.block('Computing training samples ...'):
                 self.training_data = []
                 for i, mu in enumerate(self.training_set):
-                    sample = self._compute_sample(mu, U[i*self.nt:(i+1)*self.nt])
-                    self.training_data.extend(sample)
+                    samples = self._compute_sample(mu, U[i*self.nt:(i+1)*self.nt])
+                    for sample in samples:
+                        self._update_scaling_parameters(sample)
+                    self.training_data.extend(samples)
 
             # compute mean square loss
             self.mse_basis = (sum(U.norm2()) - sum(svals**2)) / len(U)
@@ -443,6 +488,7 @@ if config.HAVE_TORCH:
                                                if self.fom.output_functional else None)
                 rom = NeuralNetworkInstationaryModel(self.fom.T, self.nt, self.neural_network,
                                                      parameters=self.fom.parameters,
+                                                     scaling_parameters=self.scaling_parameters,
                                                      output_functional=projected_output_functional,
                                                      name=f'{self.fom.name}_reduced')
 
@@ -506,7 +552,8 @@ if config.HAVE_TORCH:
             """Construct the reduced order model."""
             with self.logger.block('Building ROM ...'):
                 rom = NeuralNetworkInstationaryStatefreeOutputModel(self.fom.T, self.nt, self.neural_network,
-                                                                    self.fom.parameters,
+                                                                    parameters=self.fom.parameters,
+                                                                    scaling_parameters=self.scaling_parameters,
                                                                     name=f'{self.fom.name}_output_reduced')
 
             return rom
@@ -591,7 +638,7 @@ if config.HAVE_TORCH:
             return t
 
     def train_neural_network(training_data, validation_data, neural_network,
-                             training_parameters={}):
+                             training_parameters={}, scaling_parameters={}):
         """Training algorithm for artificial neural networks.
 
         Trains a single neural network using the given training and validation data.
@@ -689,6 +736,19 @@ if config.HAVE_TORCH:
 
         logger.info('Starting optimization procedure ...')
 
+        if 'min_inputs' in scaling_parameters and 'max_inputs' in scaling_parameters:
+            min_inputs = scaling_parameters['min_inputs']
+            max_inputs = scaling_parameters['max_inputs']
+        else:
+            min_inputs = None
+            max_inputs = None
+        if 'min_targets' in scaling_parameters and 'max_targets' in scaling_parameters:
+            min_targets = scaling_parameters['min_targets']
+            max_targets = scaling_parameters['max_targets']
+        else:
+            min_targets = None
+            max_targets = None
+
         # perform optimization procedure
         for epoch in range(epochs):
             losses = {'full': 0.}
@@ -704,8 +764,15 @@ if config.HAVE_TORCH:
 
                 # iterate over batches
                 for batch in dataloaders[phase]:
-                    inputs = batch[0]
-                    targets = batch[1]
+                    # scale inputs and outputs if desired
+                    if min_inputs is not None and max_inputs is not None:
+                        inputs = (batch[0] - min_inputs) / (max_inputs - min_inputs)
+                    else:
+                        inputs = batch[0]
+                    if min_targets is not None and max_targets is not None:
+                        targets = (batch[1] - min_targets) / (max_targets - min_targets)
+                    else:
+                        targets = batch[1]
 
                     with torch.set_grad_enabled(phase == 'train'):
                         def closure():
@@ -744,7 +811,7 @@ if config.HAVE_TORCH:
 
     def multiple_restarts_training(training_data, validation_data, neural_network,
                                    target_loss=None, max_restarts=10,
-                                   training_parameters={}, seed=None):
+                                   training_parameters={}, scaling_parameters={}, seed=None):
         """Algorithm that performs multiple restarts of neural network training.
 
         This method either performs a predefined number of restarts and returns
@@ -800,7 +867,8 @@ if config.HAVE_TORCH:
 
         with logger.block('Training neural network #0 ...'):
             best_neural_network, losses = train_neural_network(training_data, validation_data,
-                                                               neural_network, training_parameters)
+                                                               neural_network, training_parameters,
+                                                               scaling_parameters)
 
         # perform multiple restarts
         for run in range(1, max_restarts + 1):
@@ -818,7 +886,8 @@ if config.HAVE_TORCH:
                             layer.reset_parameters()
                 # perform training
                 current_nn, current_losses = train_neural_network(training_data, validation_data,
-                                                                  neural_network, training_parameters)
+                                                                  neural_network, training_parameters,
+                                                                  scaling_parameters)
 
             if current_losses['full'] < losses['full']:
                 logger.info(f'Found better neural network (loss of {current_losses["full"]:.3e} '
