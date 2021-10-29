@@ -318,7 +318,7 @@ class Model(CacheableObject, ParametricObject):
         # log output
         # explicitly checking if logging is disabled saves some cpu cycles
         if not self.logging_disabled:
-            self.logger.info(f'Solving {self.name} for {mu} ...')
+            self.logger.info(f'Solving {self.name} ...')
 
         # first call _compute to give subclasses more control
         data = self._compute(solution=solution, output=output,
