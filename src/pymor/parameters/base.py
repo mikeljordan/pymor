@@ -551,8 +551,40 @@ class ParameterSpace(ParametricObject):
                       for ls, sps in zip(linspaces, self.parameters.values()))
         return [Mu((k, np.array(v)) for k, v in zip(self.parameters, i))
                 for i in product(*iters)]
+    
+    # def _apply_bounds(self, control, options):    #working fine
+        
+    #     self.lb = options["lb"]
+    #     self.ub = options["ub"]
+    #     if self.lb is None and self.ub is None:
+    #         return control
+    
+    #     for i in range(control.shape[0]):
+    #         lower_bound = None
+    #         if self.lb is not None:
+    #             if len(self.lb) == 1:
+    #                 lower_bound = self.lb
+    #             elif len(self.lb)-1 >= i:
+    #                 lower_bound = self.lb[i]
+    #             else:
+    #                 np.error("Lower bound dimension is wrong.")
+    #         upper_bound = None
+    #         if self.ub is not None:
+    #             if len(self.ub) == 1:
+    #                 upper_bound = self.ub
+    #             elif len(self.ub)-1 >= i:
+    #                 upper_bound = self.ub[i]
+    #             else:
+    #                 np.error("Upper bound dimension is wrong.")
+    
+    #         if control.ndim == 1:
+    #             control[i] = np.clip(control[i], lower_bound, upper_bound)
+    #         elif control.ndim == 2:
+    #             control[i, :] = np.clip(control[i, :], lower_bound, upper_bound)
+    
+    #     return control
 
-    def sample_randomly(self, count=None, random_state=None, seed=None):
+    def sample_randomly(self, count=None, random_state=None, seed=None, distribution="uniform", mean=None, c=None):
         """Randomly sample |parameter values| from the space.
 
         Parameters
@@ -573,14 +605,28 @@ class ParameterSpace(ParametricObject):
         -------
         The sampled |parameter values|.
         """
-        assert not random_state or seed is None
-        random_state = get_random_state(random_state, seed)
-        get_param = lambda: Mu(((k, random_state.uniform(self.ranges[k][0], self.ranges[k][1], size))
-                               for k, size in self.parameters.items()))
-        if count is None:
-            return get_param()
+        if distribution=='uniform':
+            assert not random_state or seed is None
+            random_state = get_random_state(random_state, seed)
+            get_param = lambda: Mu(((k, random_state.uniform(self.ranges[k][0], self.ranges[k][1], size))
+                                   for k, size in self.parameters.items()))
+            if count is None:
+                return get_param()
+            else:
+                return [get_param() for _ in range(count)]
+        elif distribution=='normal':
+            assert count
+            assert c is not None
+            assert mean is not None
+            seed = seed or 0
+            np.random.seed(seed)
+            x_p = np.random.multivariate_normal(mean, c, count)
+            # x_p = self._apply_bounds(x_p)
+            # # print(x_p)
+            params = [self.parameters.parse(sample) for sample in x_p]
+            return params
         else:
-            return [get_param() for _ in range(count)]
+            raise NotImplementedError('distribution not known')
 
     def contains(self, mu):
         if not isinstance(mu, Mu):
@@ -589,3 +635,7 @@ class ParameterSpace(ParametricObject):
             return False
         return all(np.all(self.ranges[k][0] <= mu[k]) and np.all(mu[k] <= self.ranges[k][1])
                    for k in self.parameters)
+
+#    def sample_normal(self, count=None, random_state=None, defcov=None):
+#
+#        return np.random.multivariate_normal(random_state, defcov, count)
