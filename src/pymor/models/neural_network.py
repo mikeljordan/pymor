@@ -43,6 +43,9 @@ if config.HAVE_TORCH:
                                                  - self.scaling_parameters['min_targets'])
                         + self.scaling_parameters['min_targets'])
             return i
+            
+        def get_scaling_parameters(self):
+            return self.scaling_parameters
 
     class NeuralNetworkModel(BaseNeuralNetworkModel):
         """Class for models of stationary problems that use artificial neural networks.
@@ -162,7 +165,7 @@ if config.HAVE_TORCH:
                 converted_input = torch.from_numpy(mu.to_numpy()).double()
                 converted_input = self._scale_input(converted_input)
                 output = self.neural_network(converted_input).data.numpy()
-                output = self._scale_target(output)
+                # output = self._scale_target(output)
                 if isinstance(output, torch.Tensor):
                     output = output.numpy()
                 return {'output': output, 'solution': None}
