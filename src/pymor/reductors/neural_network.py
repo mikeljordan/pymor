@@ -213,7 +213,7 @@ if config.HAVE_TORCH:
                     # compute minimum and maximum of outputs/targets for scaling
                     self._update_scaling_parameters(sample)
                     self.training_data.extend(sample)
-
+                    
             # compute mean square loss
             self.mse_basis = (sum(U.norm2()) - sum(svals**2)) / len(U)
 
@@ -360,6 +360,9 @@ if config.HAVE_TORCH:
                     sample = self._compute_sample(mu)
                     self._update_scaling_parameters(sample)
                     self.training_data.extend(sample)
+                    
+            print(f"Min output: {self.scaling_parameters['min_targets']}")
+            print(f"Max output: {self.scaling_parameters['max_targets']}")
 
         def _compute_sample(self, mu):
             """Transform parameter and corresponding output to tensors."""
@@ -959,6 +962,9 @@ if config.HAVE_TORCH:
             else:
                 logger.info(f'Rejecting neural network with loss of {current_losses["full"]:.3e} '
                             f'(instead of {losses["full"]:.3e}) ...')
+                
+            logger.info(f'Training loss of current neural network:   {current_losses["train"]:.3e}')
+            logger.info(f'Validation loss of current neural network: {current_losses["val"]:.3e}')
 
         if target_loss:
             raise NeuralNetworkTrainingFailed(f'Could not find neural network with prescribed loss of '
